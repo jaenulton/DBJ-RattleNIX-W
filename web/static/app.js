@@ -10,6 +10,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const el = document.getElementById("callsign-input");
     if (el) el.value = savedCall;
   }
+  initThemeSwitcher();
   connectWebSocket();
   setupUIEvents();
   startMeterLoop();
@@ -214,6 +215,155 @@ function setupUIEvents() {
 
   // URL Shortener Feature (url.w8jae.com)
   initUrlShortener();
+
+  // OTA Updates Engine
+  initOtaUpdater();
+}
+
+function initThemeSwitcher() {
+  const themeButtons = document.querySelectorAll(".theme-btn");
+  if (!themeButtons || themeButtons.length === 0) return;
+
+  const validThemes = ["dark", "charcoal", "light"];
+  const savedTheme = localStorage.getItem("dbj_rattlenix_theme") || "dark";
+  const activeTheme = validThemes.includes(savedTheme) ? savedTheme : "dark";
+
+  const applyTheme = (theme) => {
+    document.documentElement.setAttribute("data-theme", theme);
+    themeButtons.forEach((btn) => {
+      const isMatch = btn.getAttribute("data-theme") === theme;
+      btn.classList.toggle("active", isMatch);
+    });
+    try {
+      localStorage.setItem("dbj_rattlenix_theme", theme);
+    } catch (e) {
+      console.warn("Could not save theme to localStorage:", e);
+    }
+  };
+
+  // Set initial theme on load
+  applyTheme(activeTheme);
+
+  // Attach click listener to each theme toggle button
+  themeButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const targetTheme = btn.getAttribute("data-theme");
+      if (targetTheme && validThemes.includes(targetTheme)) {
+        applyTheme(targetTheme);
+      }
+    });
+  });
+}
+
+function initOtaUpdater() {
+  const btnCheck = document.getElementById("btn-check-updates");
+  const btnApply = document.getElementById("btn-apply-update");
+  const statusBox = document.getElementById("ota-status-box");
+  const statusText = document.getElementById("ota-status-text");
+  const notesBox = document.getElementById("ota-notes-box");
+  const currentVerLabel = document.getElementById("ota-current-version");
+
+  if (!btnCheck) return;
+
+  let currentPendingVersion = null;
+
+  const performCheck = async (silent = false) => {
+    if (!silent) {
+      statusBox.classList.remove("hidden");
+      statusText.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Checking for updates from devbyjae.com...';
+      notesBox.classList.add("hidden");
+      btnApply.classList.add("hidden");
+    }
+
+    try {
+      const resp = await fetch("/api/check_update");
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+
+      if (currentVerLabel && data.current_version) {
+        currentVerLabel.textContent = `Version: ${data.current_version}`;
+      }
+
+      if (data.has_update) {
+        currentPendingVersion = data.target_version;
+        const typeBadge = data.target_type === "beta" ? "🧪 Bleeding-Edge Beta" : "🚀 Milestone Release";
+
+        // If auto_apply is true (major/minor milestone 1.1, 1.2, etc.), auto-trigger update
+        if (data.auto_apply && silent) {
+          triggerApplyUpdate(data.target_version, true);
+          return;
+        }
+
+        statusBox.classList.remove("hidden");
+        statusText.innerHTML = `<strong>${typeBadge} Available: v${data.target_version}</strong>`;
+        if (data.release_notes) {
+          notesBox.textContent = data.release_notes;
+          notesBox.classList.remove("hidden");
+        }
+        btnApply.classList.remove("hidden");
+        btnApply.innerHTML = `<i class="fa-solid fa-download"></i> <span>Install v${data.target_version} Now</span>`;
+
+        // Update settings button indicator if beta or pending
+        const settingsBtn = document.getElementById("btn-open-settings");
+        if (settingsBtn) {
+          settingsBtn.style.borderColor = "var(--accent-amber)";
+          settingsBtn.title = `Update Available: v${data.target_version}`;
+        }
+      } else {
+        if (!silent) {
+          statusBox.classList.remove("hidden");
+          statusText.innerHTML = '<span style="color: var(--accent-green);"><i class="fa-solid fa-circle-check"></i> DBJ RattleNIX is up to date!</span>';
+          notesBox.classList.add("hidden");
+          btnApply.classList.add("hidden");
+        }
+      }
+    } catch (err) {
+      if (!silent) {
+        statusBox.classList.remove("hidden");
+        statusText.innerHTML = `<span style="color: var(--accent-red);"><i class="fa-solid fa-triangle-exclamation"></i> Check failed: ${err.message}</span>`;
+      }
+    }
+  };
+
+  const triggerApplyUpdate = async (ver, isAuto = false) => {
+    statusBox.classList.remove("hidden");
+    statusText.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${isAuto ? 'Auto-updating' : 'Downloading and applying'} v${ver}...`;
+    btnApply.disabled = true;
+
+    try {
+      const resp = await fetch("/api/apply_update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: ver })
+      });
+      const res = await resp.json();
+
+      if (res.success) {
+        statusText.innerHTML = `<span style="color: var(--accent-green);"><i class="fa-solid fa-circle-check"></i> Updated to v${ver}! Reloading interface...</span>`;
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+      } else {
+        statusText.innerHTML = `<span style="color: var(--accent-red);"><i class="fa-solid fa-triangle-exclamation"></i> Update failed: ${res.error || 'Unknown error'}</span>`;
+        btnApply.disabled = false;
+      }
+    } catch (err) {
+      statusText.innerHTML = `<span style="color: var(--accent-red);"><i class="fa-solid fa-triangle-exclamation"></i> Network error applying update: ${err.message}</span>`;
+      btnApply.disabled = false;
+    }
+  };
+
+  btnCheck.addEventListener("click", () => performCheck(false));
+  btnApply.addEventListener("click", () => {
+    if (currentPendingVersion) {
+      triggerApplyUpdate(currentPendingVersion, false);
+    }
+  });
+
+  // Background Auto-Check on startup (delayed 2.5s for clean initial load)
+  setTimeout(() => {
+    performCheck(true);
+  }, 2500);
 }
 
 function initUrlShortener() {

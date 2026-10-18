@@ -37,6 +37,7 @@ URL_HISTORY_FILE = os.path.join(CONFIG_DIR, "urls.json")
 sys.path.append(BASE_DIR)
 from morse_decoder import MorseDecoder
 from aiohttp import web, WSMsgType
+import updater
 
 # Audio engine import: sounddevice with fallback
 try:
@@ -600,6 +601,25 @@ async def websocket_handler(request):
 
     return ws
 
+async def check_update_handler(request):
+    info = await updater.check_updates(updater.CURRENT_VERSION)
+    return web.json_response(info)
+
+async def apply_update_handler(request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    target_ver = data.get("version")
+    if not target_ver:
+        check_res = await updater.check_updates(updater.CURRENT_VERSION)
+        target_ver = check_res.get("target_version")
+        if not target_ver:
+            return web.json_response({"success": False, "error": "No update target available"}, status=400)
+
+    res = await updater.apply_ota_patch(target_ver, platform_name="windows", app_base_dir=DATA_DIR)
+    return web.json_response(res)
+
 async def on_startup(app):
     loop = asyncio.get_running_loop()
     app["core"].start(loop)
@@ -629,6 +649,8 @@ def create_app():
     app.router.add_get("/webhook/click", webhook_click_recorder)
     app.router.add_post("/webhook/click", webhook_click_recorder)
     app.router.add_get("/r/{code}", track_redirect_handler)
+    app.router.add_get("/api/check_update", check_update_handler)
+    app.router.add_post("/api/apply_update", apply_update_handler)
     app.router.add_get("/ws", websocket_handler)
     app.router.add_static("/static/", path=STATIC_DIR, name="static")
 
