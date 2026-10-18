@@ -219,54 +219,77 @@ class RattlegramCoreWin:
                 dev_idx = None
 
         if HAS_SD:
-            try:
-                with sd.InputStream(
-                    samplerate=SAMPLE_RATE,
-                    blocksize=FRAME_SAMPLES,
-                    device=dev_idx,
-                    channels=1,
-                    dtype="int16"
-                ) as stream:
-                    while self.is_running:
-                        if self.is_transmitting:
-                            time.sleep(0.04)
-                            continue
+            while self.is_running:
+                try:
+                    # Query native channels for the device to support Intel SST & laptop mic arrays
+                    in_channels = 1
+                    try:
+                        dev_info = sd.query_devices(dev_idx, 'input')
+                        max_ch = dev_info.get('max_input_channels', 1)
+                        if max_ch >= 2:
+                            in_channels = 2
+                        elif max_ch == 1:
+                            in_channels = 1
+                    except Exception:
+                        in_channels = 1
 
-                        data, overflowed = stream.read(FRAME_SAMPLES)
-                        arr = np.frombuffer(data, dtype=np.int16)
-                        peak = float(np.max(np.abs(arr)) / 32768.0)
+                    with sd.InputStream(
+                        samplerate=SAMPLE_RATE,
+                        blocksize=FRAME_SAMPLES,
+                        device=dev_idx,
+                        channels=in_channels,
+                        dtype="int16"
+                    ) as stream:
+                        while self.is_running:
+                            if self.is_transmitting:
+                                time.sleep(0.04)
+                                continue
 
-                        now = time.time()
-                        if now - last_meter_send >= 0.04:
-                            last_meter_send = now
-                            self.broadcast_ws({"type": "audio_level", "level": peak})
+                            data, overflowed = stream.read(FRAME_SAMPLES)
+                            arr = np.frombuffer(data, dtype=np.int16)
 
-                        # Feed into CW / Morse Code Decoder
-                        cw_words = self.morse_decoder.process_frame(arr)
-                        for word in cw_words:
-                            self.broadcast_ws({"type": "cw_message", "callsign": "CW ID", "payload": word})
+                            # If multi-channel capture, downmix cleanly to mono
+                            if in_channels > 1:
+                                arr = arr.reshape(-1, in_channels).mean(axis=1).astype(np.int16)
 
-                        # Stream into Rattlegram COFDM decoder
-                        if self.decoder_proc and self.decoder_proc.stdin:
-                            self.decoder_proc.stdin.write(data.tobytes())
-                            self.decoder_proc.stdin.flush()
+                            mono_bytes = arr.tobytes()
+                            peak = float(np.max(np.abs(arr)) / 32768.0)
 
-                        # Stream Spectrum / Waterfall FFT data at ~20-25 FPS
-                        if now - self._last_fft_send >= 0.045:
-                            self._last_fft_send = now
-                            self._fft_buffer[:-FRAME_SAMPLES] = self._fft_buffer[FRAME_SAMPLES:]
-                            self._fft_buffer[-FRAME_SAMPLES:] = arr.astype(np.float32) / 32768.0
-                            fft_mag = np.abs(np.fft.rfft(self._fft_buffer * self._fft_window))
-                            bins_4k = fft_mag[:86]
-                            db = 20.0 * np.log10(np.maximum(bins_4k, 1e-4))
-                            norm = np.clip((db + 75.0) * (255.0 / 65.0), 0, 255).astype(np.uint8)
-                            self.broadcast_ws({
-                                "type": "fft_frame",
-                                "bins": norm.tolist()
-                            })
+                            now = time.time()
+                            if now - last_meter_send >= 0.04:
+                                last_meter_send = now
+                                self.broadcast_ws({"type": "audio_level", "level": peak})
 
-            except Exception as e:
-                self.broadcast_ws({"type": "system_log", "message": f"Windows audio capture error: {e}"})
+                            # Feed into CW / Morse Code Decoder
+                            cw_words = self.morse_decoder.process_frame(arr)
+                            for word in cw_words:
+                                self.broadcast_ws({"type": "cw_message", "callsign": "CW ID", "payload": word})
+
+                            # Stream into Rattlegram COFDM decoder
+                            if self.decoder_proc and self.decoder_proc.stdin:
+                                self.decoder_proc.stdin.write(mono_bytes)
+                                self.decoder_proc.stdin.flush()
+
+                            # Stream Spectrum / Waterfall FFT data at ~20-25 FPS
+                            if now - self._last_fft_send >= 0.045:
+                                self._last_fft_send = now
+                                self._fft_buffer[:-FRAME_SAMPLES] = self._fft_buffer[FRAME_SAMPLES:]
+                                self._fft_buffer[-FRAME_SAMPLES:] = arr.astype(np.float32) / 32768.0
+                                fft_mag = np.abs(np.fft.rfft(self._fft_buffer * self._fft_window))
+                                bins_4k = fft_mag[:86]
+                                db = 20.0 * np.log10(np.maximum(bins_4k, 1e-4))
+                                norm = np.clip((db + 75.0) * (255.0 / 65.0), 0, 255).astype(np.uint8)
+                                self.broadcast_ws({
+                                    "type": "fft_frame",
+                                    "bins": norm.tolist()
+                                })
+
+                except Exception as e:
+                    self.broadcast_ws({"type": "system_log", "message": f"Windows audio capture error: {e}"})
+                    if not self.is_running:
+                        break
+                    time.sleep(1.0)
+
 
     def _decoder_reader_thread(self):
         proc = self.decoder_proc

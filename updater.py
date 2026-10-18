@@ -17,7 +17,7 @@ import tempfile
 import asyncio
 import aiohttp
 
-CURRENT_VERSION = "1.11"
+CURRENT_VERSION = "1.12"
 VERSION_MANIFEST_URL = "https://www.devbyjae.com/updates/version.json"
 
 def parse_semver(ver_str):
