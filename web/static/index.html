@@ -37,15 +37,26 @@
     </div>
   </header>
 
-  <!-- Live Audio Signal & Sync Card -->
+  <!-- Live Audio Signal, Spectrum Analyzer & Waterfall Card -->
   <section class="glass-card signal-card">
     <div class="signal-header">
-      <span style="font-weight: 700; color: var(--text-secondary);">Live Mic Visual Feedback:</span>
+      <div style="display: flex; align-items: center; gap: 0.8rem;">
+        <span style="font-weight: 700; color: var(--text-secondary);">Live Mic &amp; Spectrum:</span>
+        <div class="meter-track-mini">
+          <div id="meter-fill" class="meter-fill"></div>
+        </div>
+      </div>
       <span id="sync-status-label" class="sync-status">RX Standby • Listening on 48 kHz</span>
     </div>
-    <div class="meter-track">
-      <div id="meter-fill" class="meter-fill"></div>
-      <div class="carrier-marker" title="Center Carrier Marker"></div>
+    <div class="visualizer-container">
+      <div class="canvas-wrap">
+        <canvas id="spectrum-canvas" width="600" height="70" class="spectrum-canvas"></canvas>
+        <span class="viz-overlay-tag">SPECTRUM (0 - 4 kHz)</span>
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="waterfall-canvas" width="600" height="90" class="waterfall-canvas"></canvas>
+        <span class="viz-overlay-tag">WATERFALL</span>
+      </div>
     </div>
   </section>
 
@@ -66,15 +77,36 @@
       <div id="messages-list" class="messages-list">
       </div>
 
-      <!-- Transmit Input Bar -->
-      <div class="compose-bar">
-        <input type="text" id="quick-message-input" class="compose-input" placeholder="Type a message to transmit over audio/RF..." maxlength="170">
-        <button id="btn-quick-send" class="btn-primary">
-          <span>🔊 Transmit (TX)</span>
-        </button>
+      <!-- Transmit Input Bar with Emoji Support -->
+      <div class="compose-bar-wrapper">
+        <div class="compose-bar">
+          <div class="emoji-picker-container">
+            <button type="button" id="btn-emoji-toggle" class="btn-emoji-toggle" title="Insert Emoji">😊</button>
+            <div id="emoji-popup" class="emoji-popup hidden">
+              <div class="emoji-grid" id="emoji-grid">
+                <!-- Emojis injected by app.js -->
+              </div>
+            </div>
+          </div>
+          <input type="text" id="quick-message-input" class="compose-input" placeholder="Type a message or URL to transmit over audio/RF..." maxlength="170">
+          <button id="btn-quick-send" class="btn-primary">
+            <span>🔊 Transmit (TX)</span>
+          </button>
+        </div>
       </div>
       <div class="char-count-sub">
         <span id="quick-char-count">0 / 170 bytes</span>
+      </div>
+
+      <!-- URL Shortener Field Query Box (url.w8jae.com) -->
+      <div class="shortener-bar">
+        <div class="shortener-icon" title="URL Shortener via url.w8jae.com">
+          <i class="fa-solid fa-link"></i>
+        </div>
+        <input type="url" id="shortener-url-input" class="shortener-input" placeholder="Paste URL to shorten (url.w8jae.com) &amp; paste into message...">
+        <button type="button" id="btn-shorten-url" class="btn-shorten">
+          <span id="shorten-btn-text"><i class="fa-solid fa-scissors"></i> Shorten &amp; Paste</span>
+        </button>
       </div>
     </section>
   </main>
@@ -94,6 +126,40 @@
           <label class="setting-label" for="callsign-input">Station Callsign:</label>
           <input type="text" id="callsign-input" class="input-field input-callsign" value="MYCALL" maxlength="10">
           <span class="setting-hint">Persisted across restarts and sent with all transmissions.</span>
+        </div>
+
+        <div class="setting-item">
+          <label class="setting-label" for="carrier-select">Carrier Frequency:</label>
+          <select id="carrier-select" class="select-field modal-select">
+            <option value="1000">1000 Hz</option>
+            <option value="1500" selected>1500 Hz (Standard)</option>
+            <option value="2000">2000 Hz</option>
+            <option value="3500">3500 Hz</option>
+            <option value="7000">7000 Hz</option>
+            <option value="11000">11000 Hz</option>
+            <option value="13000">13000 Hz</option>
+            <option value="16000">16000 Hz</option>
+            <option value="20000">20000 Hz</option>
+          </select>
+          <span class="setting-hint">Center audio carrier frequency for COFDM transmission.</span>
+        </div>
+
+        <div class="setting-item">
+          <label class="setting-label" for="bitrate-select">Encoder Bitrate / Modulation:</label>
+          <select id="bitrate-select" class="select-field modal-select">
+            <option value="2">BPSK (Robust / Lower Speed)</option>
+            <option value="4" selected>QPSK (Standard / Balanced Speed)</option>
+            <option value="8">8PSK (High Speed / High SNR)</option>
+          </select>
+          <span class="setting-hint">Modulation scheme and symbol mapping rate for transmission and reception.</span>
+        </div>
+
+        <div class="setting-item checkbox-setting">
+          <label class="checkbox-label" for="fancy-header-check">
+            <input type="checkbox" id="fancy-header-check" class="setting-checkbox" checked>
+            <span class="setting-label">Enable Fancy Header (Visual Spectrum Callsign)</span>
+          </label>
+          <span class="setting-hint">Displays callsign visibly as sub-carrier patterns on waterfalls and spectrum analyzers like Android Rattlegram.</span>
         </div>
 
         <div class="setting-item">

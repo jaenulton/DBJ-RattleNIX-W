@@ -2,7 +2,8 @@
 """
 DBJ RattleNIX - Windows Standalone Edition.
 Zero-dependency Windows audio stack with PyAudio / SoundDevice fallback,
-native C++ COFDM modem bridge, CW/Morse ID decoder, and embedded web GUI.
+native C++ COFDM modem bridge, CW/Morse ID decoder, FFT spectrum analyzer,
+URL shortener webhook/analytics, and embedded web GUI.
 """
 
 import os
@@ -15,6 +16,7 @@ import subprocess
 import tempfile
 import webbrowser
 import numpy as np
+import aiohttp
 
 # Resolve local paths whether running from source or PyInstaller bundle
 if getattr(sys, 'frozen', False):
@@ -28,7 +30,9 @@ BIN_DIR = os.path.join(BASE_DIR, "bin")
 ENCODE_BIN = os.path.join(BIN_DIR, "encode.exe")
 DECODE_STREAM_BIN = os.path.join(BIN_DIR, "decode_stream.exe")
 STATIC_DIR = os.path.join(BASE_DIR, "web", "static")
-CONFIG_FILE = os.path.join(os.environ.get("APPDATA", DATA_DIR), "DBJ_RattleNIX", "config.json")
+CONFIG_DIR = os.path.join(os.environ.get("APPDATA", DATA_DIR), "DBJ_RattleNIX")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
+URL_HISTORY_FILE = os.path.join(CONFIG_DIR, "urls.json")
 
 sys.path.append(BASE_DIR)
 from morse_decoder import MorseDecoder
@@ -51,6 +55,7 @@ class RattlegramCoreWin:
         self.callsign = "MYCALL"
         self.carrier = "1500"
         self.mapping = "4"
+        self.fancy_header = True
         self.input_device = None
         self.output_device = None
 
@@ -60,7 +65,59 @@ class RattlegramCoreWin:
         self.is_transmitting = False
 
         self.morse_decoder = MorseDecoder(SAMPLE_RATE, FRAME_SAMPLES)
+        self._fft_buffer = np.zeros(1024, dtype=np.float32)
+        self._fft_window = np.hanning(1024).astype(np.float32)
+        self._last_fft_send = 0.0
+
+        # Real-time URL Click Tracking & Analytics
+        self.tracked_urls = {}
+        self.url_history_file = URL_HISTORY_FILE
+        self._load_tracked_urls()
         self._load_config()
+
+    def _load_tracked_urls(self):
+        try:
+            if os.path.exists(self.url_history_file):
+                with open(self.url_history_file, "r") as f:
+                    self.tracked_urls = json.load(f)
+        except Exception:
+            pass
+
+    def _save_tracked_urls(self):
+        try:
+            os.makedirs(os.path.dirname(self.url_history_file), exist_ok=True)
+            with open(self.url_history_file, "w") as f:
+                json.dump(self.tracked_urls, f, indent=2)
+        except Exception:
+            pass
+
+    def record_short_url(self, short_code, short_url, target_url):
+        if not short_code:
+            return
+        if short_code not in self.tracked_urls:
+            self.tracked_urls[short_code] = {
+                "short_code": short_code,
+                "short_url": short_url,
+                "target_url": target_url,
+                "clicks": 0,
+                "created_at": time.time()
+            }
+            self._save_tracked_urls()
+        return self.tracked_urls[short_code]
+
+    def increment_url_clicks(self, short_code):
+        if short_code in self.tracked_urls:
+            self.tracked_urls[short_code]["clicks"] += 1
+            new_count = self.tracked_urls[short_code]["clicks"]
+            self._save_tracked_urls()
+            self.broadcast_ws({
+                "type": "url_click_update",
+                "short_code": short_code,
+                "short_url": self.tracked_urls[short_code].get("short_url"),
+                "clicks": new_count
+            })
+            return new_count
+        return 0
 
     def _load_config(self):
         try:
@@ -68,6 +125,9 @@ class RattlegramCoreWin:
                 with open(CONFIG_FILE, "r") as f:
                     cfg = json.load(f)
                     self.callsign = cfg.get("callsign", self.callsign)
+                    self.carrier = str(cfg.get("carrier", self.carrier))
+                    self.mapping = str(cfg.get("mapping", self.mapping))
+                    self.fancy_header = bool(cfg.get("fancy_header", self.fancy_header))
                     self.input_device = cfg.get("input_device", self.input_device)
                     self.output_device = cfg.get("output_device", self.output_device)
         except Exception:
@@ -79,6 +139,9 @@ class RattlegramCoreWin:
             with open(CONFIG_FILE, "w") as f:
                 json.dump({
                     "callsign": self.callsign,
+                    "carrier": self.carrier,
+                    "mapping": self.mapping,
+                    "fancy_header": self.fancy_header,
                     "input_device": self.input_device,
                     "output_device": self.output_device
                 }, f, indent=2)
@@ -186,6 +249,21 @@ class RattlegramCoreWin:
                         if self.decoder_proc and self.decoder_proc.stdin:
                             self.decoder_proc.stdin.write(data.tobytes())
                             self.decoder_proc.stdin.flush()
+
+                        # Stream Spectrum / Waterfall FFT data at ~20-25 FPS
+                        if now - self._last_fft_send >= 0.045:
+                            self._last_fft_send = now
+                            self._fft_buffer[:-FRAME_SAMPLES] = self._fft_buffer[FRAME_SAMPLES:]
+                            self._fft_buffer[-FRAME_SAMPLES:] = arr.astype(np.float32) / 32768.0
+                            fft_mag = np.abs(np.fft.rfft(self._fft_buffer * self._fft_window))
+                            bins_4k = fft_mag[:86]
+                            db = 20.0 * np.log10(np.maximum(bins_4k, 1e-4))
+                            norm = np.clip((db + 75.0) * (255.0 / 65.0), 0, 255).astype(np.uint8)
+                            self.broadcast_ws({
+                                "type": "fft_frame",
+                                "bins": norm.tolist()
+                            })
+
             except Exception as e:
                 self.broadcast_ws({"type": "system_log", "message": f"Windows audio capture error: {e}"})
 
@@ -269,14 +347,13 @@ class RattlegramCoreWin:
                     "16",
                     "0",
                     str(self.mapping),
-                    wav_path
+                    wav_path,
+                    "1" if self.fancy_header else "0"
                 ]
                 res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
                 if res.returncode != 0:
                     self.broadcast_ws({"type": "system_log", "message": f"Encode error: {res.stderr.decode()}"})
                     return
-
-                self.broadcast_ws({"type": "rx_message", "callsign": f"TX [{callsign}]", "payload": msg, "flips": 0})
 
                 if HAS_SD:
                     import wave
@@ -329,7 +406,8 @@ class RattlegramCoreWin:
                     "16",
                     "0",
                     str(self.mapping),
-                    wav_path
+                    wav_path,
+                    "1" if self.fancy_header else "0"
                 ]
                 subprocess.run(cmd, check=True)
                 with open(wav_path, "rb") as f:
@@ -352,6 +430,93 @@ class RattlegramCoreWin:
 async def index_handler(request):
     return web.FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
+async def shorten_url_remote(url_to_shorten: str, core: RattlegramCoreWin = None) -> dict:
+    url_to_shorten = url_to_shorten.strip()
+    if not url_to_shorten:
+        return {"error": "URL cannot be empty"}
+    if not url_to_shorten.startswith(("http://", "https://")):
+        url_to_shorten = "https://" + url_to_shorten
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(
+                "https://url.w8jae.com/api/shorten",
+                json={"targetUrl": url_to_shorten},
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=8)
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    short_url = data.get("shortUrl")
+                    short_code = data.get("shortCode", "")
+                    if short_url:
+                        if core:
+                            core.record_short_url(short_code, short_url, url_to_shorten)
+                        return {
+                            "success": True,
+                            "shortUrl": short_url,
+                            "shortCode": short_code,
+                            "targetUrl": url_to_shorten,
+                            "clicks": core.tracked_urls.get(short_code, {}).get("clicks", 0) if core else 0
+                        }
+                    return {"error": "Invalid response from URL shortener service"}
+                else:
+                    return {"error": f"Shortener service returned HTTP {resp.status}"}
+        except Exception as e:
+            return {"error": f"Failed to connect to shortener service: {e}"}
+
+async def track_redirect_handler(request):
+    core = request.app["core"]
+    short_code = request.match_info.get("code", "").strip()
+    info = core.tracked_urls.get(short_code)
+    if info:
+        core.increment_url_clicks(short_code)
+        target = info.get("target_url") or info.get("short_url")
+        raise web.HTTPFound(location=target)
+    raise web.HTTPNotFound(text="Short URL tracking code not found")
+
+async def shorten_webhook_handler(request):
+    core = request.app["core"]
+    url_to_shorten = None
+    if request.method == "POST":
+        content_type = request.content_type.lower()
+        if "application/json" in content_type:
+            try:
+                body = await request.json()
+                url_to_shorten = body.get("url") or body.get("targetUrl")
+            except Exception:
+                return web.json_response({"error": "Malformed JSON body"}, status=400)
+        else:
+            try:
+                post_data = await request.post()
+                url_to_shorten = post_data.get("url") or post_data.get("targetUrl")
+            except Exception:
+                pass
+    
+    if not url_to_shorten:
+        url_to_shorten = request.query.get("url") or request.query.get("targetUrl")
+
+    if not url_to_shorten:
+        return web.json_response({"error": "Missing 'url' or 'targetUrl' parameter"}, status=400)
+
+    result = await shorten_url_remote(url_to_shorten, core)
+    status_code = 200 if result.get("success") else 502
+    return web.json_response(result, status=status_code)
+
+async def webhook_click_recorder(request):
+    core = request.app["core"]
+    code = request.query.get("code") or request.query.get("short_code")
+    if request.method == "POST":
+        try:
+            body = await request.json()
+            code = body.get("code") or body.get("short_code") or code
+        except Exception:
+            pass
+    if code and code in core.tracked_urls:
+        new_cnt = core.increment_url_clicks(code)
+        return web.json_response({"success": True, "code": code, "clicks": new_cnt})
+    return web.json_response({"error": "Code not found or not provided"}, status=400)
+
 async def websocket_handler(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -370,7 +535,16 @@ async def websocket_handler(request):
 
     await ws.send_str(json.dumps({
         "type": "config_state",
-        "callsign": core.callsign
+        "callsign": core.callsign,
+        "carrier": core.carrier,
+        "mapping": core.mapping,
+        "fancy_header": core.fancy_header
+    }))
+
+    # Send initial click counts for all tracked URLs
+    await ws.send_str(json.dumps({
+        "type": "url_click_all",
+        "urls": core.tracked_urls
     }))
 
     try:
@@ -382,12 +556,32 @@ async def websocket_handler(request):
                     core.transmit(data.get("message", ""))
                 elif cmd == "test_loopback":
                     core.test_loopback()
+                elif cmd == "shorten_url":
+                    target_url = data.get("url", "")
+                    res = await shorten_url_remote(target_url, core)
+                    await ws.send_str(json.dumps({
+                        "type": "shorten_result",
+                        "req_id": data.get("req_id", ""),
+                        **res
+                    }))
+                elif cmd == "record_url_click":
+                    short_code = data.get("short_code", "")
+                    core.increment_url_clicks(short_code)
                 elif cmd == "set_config":
                     core.callsign = data.get("callsign", core.callsign)
+                    new_carrier = data.get("carrier")
+                    new_mapping = data.get("mapping")
                     new_in = data.get("input_device")
                     new_out = data.get("output_device")
+                    if "fancy_header" in data:
+                        core.fancy_header = bool(data["fancy_header"])
 
                     changed = False
+                    if new_carrier and str(new_carrier) != str(core.carrier):
+                        core.carrier = str(new_carrier)
+                    if new_mapping and str(new_mapping) != str(core.mapping):
+                        core.mapping = str(new_mapping)
+                        changed = True
                     if new_in and new_in != core.input_device:
                         core.input_device = new_in
                         changed = True
@@ -428,6 +622,13 @@ def create_app():
     app.on_cleanup.append(on_cleanup)
 
     app.router.add_get("/", index_handler)
+    app.router.add_get("/api/shorten", shorten_webhook_handler)
+    app.router.add_post("/api/shorten", shorten_webhook_handler)
+    app.router.add_post("/webhook/shorten", shorten_webhook_handler)
+    app.router.add_get("/webhook/shorten", shorten_webhook_handler)
+    app.router.add_get("/webhook/click", webhook_click_recorder)
+    app.router.add_post("/webhook/click", webhook_click_recorder)
+    app.router.add_get("/r/{code}", track_redirect_handler)
     app.router.add_get("/ws", websocket_handler)
     app.router.add_static("/static/", path=STATIC_DIR, name="static")
 

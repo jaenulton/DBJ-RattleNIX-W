@@ -14,11 +14,12 @@ int main(int argc, char **argv) {
     int output_bits = 16;
     int psk = 4;
     const char *out_file = "out.wav";
+    bool fancy_header = false;
 
-    if (argc < 3 || argc > 10) {
+    if (argc < 3 || argc > 11) {
         std::cerr << "usage: " << argv[0]
                   << " MESSAGE CALLSIGN [NOISE_SYMBOLS] [CARRIER_FREQUENCY] "
-                     "[RATE] [BITS] [CHANNEL] [MAPPING] [FILE] "
+                     "[RATE] [BITS] [CHANNEL] [MAPPING] [FILE] [FANCY_HEADER]"
                   << std::endl;
         return 1;
     }
@@ -38,6 +39,8 @@ int main(int argc, char **argv) {
         psk = std::atoi(argv[8]);
     if (argc > 9)
         out_file = argv[9];
+    if (argc > 10)
+        fancy_header = (std::atoi(argv[10]) != 0);
 
     char message[192] = {0};
     for (unsigned long i = 0; i < mesg.length(); i++) {
@@ -164,10 +167,8 @@ int main(int argc, char **argv) {
     }
     encoder->configure(reinterpret_cast<const uint8_t *>(&message[0]),
             reinterpret_cast<const int8_t *>(&call_sign[0]), carrier_freq,
-            noise_symbols, false);
-    // not sure how often to iterate. up to testing
-    for (int i = 0; i < 12 + noise_symbols; ++i) {
-        encoder->produce_write(channel);
+            noise_symbols, fancy_header);
+    while (encoder->produce_write(channel)) {
     }
 
     return 0;
