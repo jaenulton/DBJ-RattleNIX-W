@@ -111,18 +111,36 @@
         <span id="quick-char-count">0 / 170 bytes</span>
       </div>
 
-      <!-- URL Shortener Field Query Box (url.w8jae.com) -->
-      <div class="shortener-bar">
-        <div class="shortener-icon" title="URL Shortener via url.w8jae.com">
-          <i class="fa-solid fa-link"></i>
+      <!-- Dual Tools: 50% URL Shortener + 50% Image Uploader & Shortener -->
+      <div class="tools-dual-row">
+        <!-- Left: URL Shortener Field (50% Width) -->
+        <div class="shortener-bar tool-half">
+          <div class="shortener-icon" title="URL Shortener via url.w8jae.com">
+            <i class="fa-solid fa-link"></i>
+          </div>
+          <input type="url" id="shortener-url-input" class="shortener-input" placeholder="Paste URL to shorten...">
+          <button type="button" id="btn-shorten-url" class="btn-shorten" title="Shorten URL &amp; Paste to Message">
+            <span id="shorten-btn-text"><i class="fa-solid fa-scissors"></i> Shorten</span>
+          </button>
         </div>
-        <input type="url" id="shortener-url-input" class="shortener-input" placeholder="Paste URL to shorten (url.w8jae.com) &amp; paste into message...">
-        <button type="button" id="btn-shorten-url" class="btn-shorten">
-          <span id="shorten-btn-text"><i class="fa-solid fa-scissors"></i> Shorten &amp; Paste</span>
-        </button>
+
+        <!-- Right: Image Upload & Shorten Field (50% Width) -->
+        <div class="image-uploader-bar tool-half">
+          <div class="uploader-icon" title="Upload Image to Host &amp; Broadcast">
+            <i class="fa-solid fa-image"></i>
+          </div>
+          <input type="file" id="image-file-input" accept="image/jpeg,image/png,image/gif,image/webp" style="display: none;">
+          <div id="image-upload-trigger" class="image-upload-trigger" title="Click to choose image from your computer">
+            <span id="image-upload-label" class="image-upload-label"><i class="fa-solid fa-cloud-arrow-up"></i> Choose Image...</span>
+          </div>
+          <button type="button" id="btn-upload-image" class="btn-upload-image" title="Upload Image, Shorten &amp; Paste Link">
+            <span id="upload-btn-text"><i class="fa-solid fa-paper-plane"></i> Upload &amp; Paste</span>
+          </button>
+        </div>
       </div>
     </section>
   </main>
+
 
   <!-- Settings Modal (Popup) -->
   <div id="settings-modal" class="modal-backdrop hidden">
@@ -194,7 +212,7 @@
               <span class="setting-label" style="display: flex; align-items: center; gap: 0.5rem;">
                 <i class="fa-solid fa-cloud-arrow-down" style="color: var(--accent-cyan);"></i> Software Updates (OTA)
               </span>
-              <span id="ota-current-version" class="ota-version-tag">Version: 1.13</span>
+              <span id="ota-current-version" class="ota-version-tag">Version: 1.14</span>
             </div>
             <button type="button" id="btn-check-updates" class="btn-check-update">
               <i class="fa-solid fa-arrows-rotate"></i> <span>Check Now</span>
@@ -245,8 +263,14 @@
           <span class="copyright-text">&copy; 2026 DBJ RattleNIX from <a href="https://www.devbyjae.com" target="_blank" rel="noopener" class="link-cyan font-medium">DevByJae</a>. All rights reserved.</span>
         </div>
       </div>
+
+      <!-- Bottom Right Persistent Version Badge -->
+      <div class="footer-version-tag">
+        <span class="version-label">v1.14</span>
+      </div>
     </div>
   </footer>
+
 
   <script src="/static/app.js"></script>
 </body>
