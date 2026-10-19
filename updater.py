@@ -17,8 +17,26 @@ import tempfile
 import asyncio
 import aiohttp
 
-CURRENT_VERSION = "1.12"
+CURRENT_VERSION = "1.13"
 VERSION_MANIFEST_URL = "https://www.devbyjae.com/updates/version.json"
+TELEMETRY_ENDPOINT = "https://devbyjae.com/api/rattlenix/log_usage.php"
+
+async def log_usage_telemetry(callsign, platform="windows", version=CURRENT_VERSION):
+    """
+    Asynchronously logs station callsign, platform, and version to telemetry API.
+    """
+    try:
+        cs = str(callsign or "ANONYMOUS").strip()
+        timeout = aiohttp.ClientTimeout(total=4)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            await session.post(TELEMETRY_ENDPOINT, json={
+                "callsign": cs,
+                "platform": platform,
+                "version": str(version)
+            })
+    except Exception:
+        pass
+
 
 def parse_semver(ver_str):
     """
