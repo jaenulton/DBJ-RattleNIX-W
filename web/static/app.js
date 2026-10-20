@@ -225,19 +225,24 @@ function setupUIEvents() {
 }
 
 function initThemeSwitcher() {
-  const themeButtons = document.querySelectorAll(".theme-btn");
-  if (!themeButtons || themeButtons.length === 0) return;
+  const themeSelect = document.getElementById("theme-select");
+  const themeButtons = document.querySelectorAll(".theme-btn"); // Backwards-compatibility fallback
 
-  const validThemes = ["dark", "charcoal", "light"];
+  const validThemes = ["dark", "charcoal", "light", "neo", "carribean", "osaka"];
   const savedTheme = localStorage.getItem("dbj_rattlenix_theme") || "dark";
   const activeTheme = validThemes.includes(savedTheme) ? savedTheme : "dark";
 
   const applyTheme = (theme) => {
     document.documentElement.setAttribute("data-theme", theme);
-    themeButtons.forEach((btn) => {
-      const isMatch = btn.getAttribute("data-theme") === theme;
-      btn.classList.toggle("active", isMatch);
-    });
+    if (themeSelect) {
+      themeSelect.value = theme;
+    }
+    if (themeButtons && themeButtons.length > 0) {
+      themeButtons.forEach((btn) => {
+        const isMatch = btn.getAttribute("data-theme") === theme;
+        btn.classList.toggle("active", isMatch);
+      });
+    }
     try {
       localStorage.setItem("dbj_rattlenix_theme", theme);
     } catch (e) {
@@ -248,15 +253,27 @@ function initThemeSwitcher() {
   // Set initial theme on load
   applyTheme(activeTheme);
 
-  // Attach click listener to each theme toggle button
-  themeButtons.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const targetTheme = btn.getAttribute("data-theme");
-      if (targetTheme && validThemes.includes(targetTheme)) {
-        applyTheme(targetTheme);
+  // Attach change listener to dropdown menu
+  if (themeSelect) {
+    themeSelect.addEventListener("change", (e) => {
+      const selected = e.target.value;
+      if (selected && validThemes.includes(selected)) {
+        applyTheme(selected);
       }
     });
-  });
+  }
+
+  // Fallback support for any remaining theme button badges
+  if (themeButtons && themeButtons.length > 0) {
+    themeButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const targetTheme = btn.getAttribute("data-theme");
+        if (targetTheme && validThemes.includes(targetTheme)) {
+          applyTheme(targetTheme);
+        }
+      });
+    });
+  }
 }
 
 function initOtaUpdater() {

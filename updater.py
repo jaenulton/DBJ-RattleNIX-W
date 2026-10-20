@@ -17,7 +17,7 @@ import tempfile
 import asyncio
 import aiohttp
 
-CURRENT_VERSION = "1.14"
+CURRENT_VERSION = "1.15"
 VERSION_MANIFEST_URL = "https://www.devbyjae.com/updates/version.json"
 TELEMETRY_ENDPOINT = "https://devbyjae.com/api/rattlenix/log_usage.php"
 
